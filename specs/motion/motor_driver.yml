@@ -1,0 +1,197 @@
+# Chicken Chaser — L293D motor-driver instance
+# Intended path: specs/motion/motor_driver.yml
+# Reusable component definition: library/motor_drivers/L293x.yml
+#
+# PSEUDO-YSL QUICK REFERENCE
+#   ->    signal or supply-to-load relationship
+#   ..    inclusive range, e.g. master.A0..A5 -> NC
+#   NC    deliberately unconnected
+#   Endpoints use instance-qualified names; nets are declared in the overview.
+#
+# SOURCE-OF-TRUTH BOUNDARY
+#   L293x.yml: intrinsic pinout, ratings, half-bridge truth table.
+#   This file: project pin allocation, motor-pair mapping, command policy.
+#   Overview: project nets, controller authority, system-wide constraints.
+
+chicken_chaser_motor_driver:
+  instance_id: motor_driver
+  role: dual_dc_motor_driver
+  component:
+    reference: l293_family
+    variant: L293D
+    definition: L293x.yml
+  environment: tinkercad_circuits
+
+  responsibilities:
+    - motor_a_drive
+    - motor_b_drive
+    - independent_speed_and_direction_control
+    - obey_safety_enable
+
+  interfaces:
+    motor_a:
+      driver_interface: MOTOR_A
+      inputs: [IN1, IN2]
+      outputs: [OUT1, OUT2]
+      enable: EN1_2
+      load_instance: motor_a
+    motor_b:
+      driver_interface: MOTOR_B
+      inputs: [IN3, IN4]
+      outputs: [OUT3, OUT4]
+      enable: EN3_4
+      load_instance: motor_b
+
+  pin_assignments:
+    IN1:
+      controller: master
+      source_pin: D10
+      function: MOTOR_A_IN1
+      signal: digital_or_pwm
+    IN2:
+      controller: master
+      source_pin: D9
+      function: MOTOR_A_IN2
+      signal: digital_or_pwm
+    IN3:
+      controller: master
+      source_pin: D6
+      function: MOTOR_B_IN3
+      signal: digital_or_pwm
+    IN4:
+      controller: master
+      source_pin: D5
+      function: MOTOR_B_IN4
+      signal: digital_or_pwm
+    EN1_2:
+      controller: safety
+      source_pin: PB4
+      function: MOTOR_SAFE
+      active_level: HIGH
+      default_level: LOW
+    EN3_4:
+      controller: safety
+      source_pin: PB4
+      function: MOTOR_SAFE
+      active_level: HIGH
+      default_level: LOW
+    VCC1:
+      supply_net: logic_5v
+      nominal_voltage_v: 5.0
+    VCC2:
+      supply_net: motor_supply
+      voltage_v: to_be_defined
+    GND1:
+      supply_net: common_gnd
+    GND2:
+      supply_net: common_gnd
+    GND3:
+      supply_net: common_gnd
+    GND4:
+      supply_net: common_gnd
+    OUT1:
+      function: motor_a_terminal_1
+    OUT2:
+      function: motor_a_terminal_2
+    OUT3:
+      function: motor_b_terminal_1
+    OUT4:
+      function: motor_b_terminal_2
+
+  connections:
+    # Uno owns motor commands. ATtiny alone owns both enable inputs.
+    - "master.D10 -> motor_driver.IN1"
+    - "master.D9 -> motor_driver.IN2"
+    - "master.D6 -> motor_driver.IN3"
+    - "master.D5 -> motor_driver.IN4"
+    - "safety.PB4 -> motor_driver.EN1_2"
+    - "safety.PB4 -> motor_driver.EN3_4"
+
+    # Supply and common return; VCC2 voltage is not yet selected.
+    - "logic_5v -> motor_driver.VCC1"
+    - "motor_supply -> motor_driver.VCC2"
+    - "common_gnd -> motor_driver.GND1"
+    - "common_gnd -> motor_driver.GND2"
+    - "common_gnd -> motor_driver.GND3"
+    - "common_gnd -> motor_driver.GND4"
+
+    # Two wires per motor; terminal polarity defines physical forward.
+    - "motor_driver.OUT1 -> motor_a.terminal_1"
+    - "motor_driver.OUT2 -> motor_a.terminal_2"
+    - "motor_driver.OUT3 -> motor_b.terminal_1"
+    - "motor_driver.OUT4 -> motor_b.terminal_2"
+
+  control:
+    command_owner: master
+    enable_authority: safety
+    safety_enable:
+      pins: [EN1_2, EN3_4]
+      common_source: safety.PB4
+      LOW: outputs_high_impedance
+      HIGH: bridge_logic_active
+      startup_required: LOW
+      fault_required: LOW
+      external_pulldown_required: true
+    # These are LOGICAL bridge states; wheel-forward depends on motor wiring.
+    # H denotes driven high, L denotes driven low, Z denotes high impedance.
+    bridge_truth_table:
+      - {enable: LOW, in_a: ANY, in_b: ANY, out_a: Z, out_b: Z, state: coast_disabled}
+      - {enable: HIGH, in_a: LOW, in_b: LOW, out_a: L, out_b: L, state: brake_low}
+      - {enable: HIGH, in_a: HIGH, in_b: LOW, out_a: H, out_b: L, state: drive_polarity_1}
+      - {enable: HIGH, in_a: LOW, in_b: HIGH, out_a: L, out_b: H, state: drive_polarity_2}
+      - {enable: HIGH, in_a: HIGH, in_b: HIGH, out_a: H, out_b: H, state: brake_high}
+    bridge_signal_mapping:
+      motor_a: {in_a: IN1, in_b: IN2, out_a: OUT1, out_b: OUT2}
+      motor_b: {in_a: IN3, in_b: IN4, out_a: OUT3, out_b: OUT4}
+    pwm:
+      strategy: input_side_pwm
+      allowed_input_pins: [IN1, IN2, IN3, IN4]
+      enable_pwm_owned_by_master: false
+      switching_pattern: to_be_defined
+      frequency_hz: to_be_defined
+    motion_mapping:
+      motor_a_forward_polarity: to_be_verified_in_simulation
+      motor_b_forward_polarity: to_be_verified_in_simulation
+      neutral_command: [LOW, LOW]
+      on_safety_status_not_armed: neutral_command
+
+  electrical:
+    motor_supply:
+      source: external_motor_regulator_pending
+      minimum_l293d_vcc2_v: 4.5
+      maximum_l293d_vcc2_v: 36.0
+      note: >-
+        A 3 V regulated VCC2 supply is outside the L293D operating range.
+        Select voltage using motor terminal voltage under load and bridge drop.
+    power_rails:
+      logic: logic_5v
+      motor: motor_supply
+      ground: common_gnd
+    motor_terminal_suppression:
+      motor_a_capacitor_nf: 100
+      motor_b_capacitor_nf: 100
+      location: across_motor_terminals
+    clamp_diodes:
+      integrated_in_l293d: true
+    supply_decoupling:
+      required: true
+      component_values_and_locations: verify_against_build
+    thermal_and_current:
+      current_monitoring: out_of_scope_for_tinkercad_prototype
+
+  validation:
+    - Controller master must not source EN1_2 or EN3_4.
+    - Both enable inputs must be LOW during reset and while faulted.
+    - Input pins must resolve to PWM-capable Uno pins.
+    - All four L293D ground pins must connect to common_gnd.
+    - VCC1 and VCC2 are distinct supply inputs, even if voltages match.
+    - VCC2 must remain within the selected driver's specified supply range.
+    - Motor polarity and input PWM strategy require simulation verification.
+    - Component library ratings and intrinsic logic are not overridden here.
+
+  outstanding_decisions:
+    - motor_supply_regulator_voltage_and_wiring
+    - actual_forward_polarity_for_both_motors
+    - input_pwm_switching_pattern_and_frequency
+    - motor_a_and_motor_b_terminal_instance_definitions
+    - verify_decoupling_and_enable_pulldown_in_circuit

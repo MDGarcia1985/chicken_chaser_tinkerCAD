@@ -1,0 +1,145 @@
+# Chicken Chaser — ATtiny85 project-specific instance configuration
+# Uses reusable attiny.yml / HC-SR04.yml / L293x.yml definitions.
+# Connections are quoted YSL-style expressions, valid YAML string values.
+# D2 and D4 are PROPOSED Arduino Uno R3 endpoints, not yet committed.
+# Logic net IDs (logic_5v/common_gnd) are conceptual project nets.
+
+chicken_chaser_attiny85:
+  component:
+    reference: attiny_x5
+    variant: ATtiny85
+    definition: attiny.yml
+  instance_id: safety
+  role: independent_motor_enable_controller
+  supply:
+    vcc: 5V
+    gnd: GND
+    logic_level_v: 5.0
+    shared_ground_with:
+    - master
+    - motor_driver
+    - ultrasonic_front
+  pin_assignments:
+    PB0:
+      physical_pin: 5
+      function: UNO_HEARTBEAT
+      direction: input
+      interface: digital_gpio
+      active_signal: toggling
+      description: Heartbeat from Uno; transitions required while armed
+    PB1:
+      physical_pin: 6
+      function: SAFETY_STATUS
+      direction: output
+      interface: digital_gpio
+      levels:
+        LOW: not_armed_or_fault
+        HIGH: armed
+      startup_state: input_high_impedance
+      description: HIGH only while ATtiny authorizes motor operation; LOW means not armed or fault
+      external_pulldown_recommended: true
+    PB2:
+      physical_pin: 7
+      function: ULTRASONIC_TRIG
+      direction: output
+      interface: digital_gpio
+      startup_state: LOW
+      pulse_high_us: 10
+    PB3:
+      physical_pin: 2
+      function: ULTRASONIC_ECHO
+      direction: input
+      interface: pulse_width_input
+      requires_timeout: true
+    PB4:
+      physical_pin: 3
+      function: MOTOR_SAFE
+      direction: output
+      interface: digital_gpio
+      levels:
+        LOW: outputs_disabled
+        HIGH: outputs_enabled
+      external_pulldown_required: true
+      startup_state: LOW
+      fault_state: LOW
+      description: One safety permission signal drives both L293D enable inputs
+    PB5:
+      physical_pin: 1
+      function: HARDWARE_RESET
+      direction: reset_input
+      active_level: LOW
+      gpio_reconfiguration: prohibited
+      description: Debounced momentary switch restarts firmware, not Flash contents
+  connections:
+  - "master.D2 -> safety.PB0"
+  - "safety.PB1 -> master.D4"
+  - "safety.PB2 -> ultrasonic_front.TRIG"
+  - "ultrasonic_front.ECHO -> safety.PB3"
+  - "safety.PB4 -> motor_driver.EN1_2"
+  - "safety.PB4 -> motor_driver.EN3_4"
+  - "manual_reset_circuit.OUT -> safety.PB5"
+  - "logic_5v -> safety.VCC"
+  - "logic_5v -> ultrasonic_front.VCC"
+  - "common_gnd -> safety.GND"
+  - "common_gnd -> ultrasonic_front.GND"
+  behavior:
+    boot:
+      motor_safe: LOW
+      safety_status: LOW
+      require_valid_sensor_reading: true
+      require_active_heartbeat: true
+      automatically_enable_after_validation: true
+      rearm_policy: on_boot_or_hardware_reset_after_all_checks_pass
+    ultrasonic:
+      minimum_interval_ms: 60
+      echo_timeout_required: true
+      missing_echo: inhibit_and_latch_fault
+      invalid_reading: inhibit_and_latch_fault
+      obstacle_threshold_mm: to_be_defined
+      obstacle_detected: inhibit_and_latch_fault
+      out_of_range_echo: validate sensor timeout semantics before classifying as fault
+    communication:
+      transport: two_dedicated_gpio_signals
+      heartbeat_input: PB0
+      status_output: PB1
+      heartbeat_frequency_hz: 10
+      heartbeat_timeout_ms: 500
+      no_heartbeat: inhibit_and_latch_fault
+      heartbeat_timing_status: initial_simulation_values
+    fault:
+      latch_in_ram: true
+      motor_safe_on_fault: LOW
+      status_on_fault: LOW
+      clear_method: hardware_reset_via_PB5
+      post_reset_revalidation_required: true
+      reset_does_not_erase_firmware: true
+      reset_while_fault_present: remain_disabled_after_revalidation
+      fault_status: "LOW represents both unarmed and fault states; detailed fault reasons require an expanded status protocol"
+  hardware_constraints:
+    motor_enable:
+      external_pulldown: required
+      pullup_to_5v: prohibited
+      independent_power_cutoff: not_implemented_in_prototype
+    reset:
+      maintain_reset_fuse_enabled: true
+      preserve_isp_programming: true
+    ultrasonic:
+      sensor_not_safety_rated: true
+    project_scope:
+      environment: Tinkercad_prototype
+      motor_current_monitoring: not_in_scope
+    status_output:
+      external_pulldown: recommended
+      default_state_during_reset: LOW
+  outstanding_decisions:
+  - obstacle_threshold_mm
+  - validate_heartbeat_timing_in_simulation
+  - confirm_master_D2_D4_are_available
+  - manual_reset_circuit_component_values
+  - distinguish_no_echo_from_out_of_range_for_selected_HC_SR04_module
+  connection_syntax:
+    format: source.instance_pin -> destination.instance_pin
+    resolution: instance_id plus pin name from component library
+    direction: logical signal direction; power rails expressed source to load
+    fanout: one entry per destination
+    status: proposed YSL-like string grammar; not a formal YSL parser

@@ -1,0 +1,241 @@
+# Chicken Chaser — project master specification
+# Scope: Arduino Uno R3 + ATtiny x5 + L293D Tinkercad prototype
+#
+# PSEUDO-YSL QUICK REFERENCE
+#   ->   directed signal/relationship: master.D2 -> safety.PB0
+#   ..   inclusive pin range: master.A0..A5 -> NC
+#   NC   deliberately unconnected; not a component or electrical net
+#   Instance-qualified pins are required; named nets are separate objects.
+#   Arrows express declared signal direction or supply-to-load relationships.
+#   A shared net does not imply every physical header contact is wired.
+#
+# POWER POLICY
+#   NO_PWR_OUT: Uno 5V/3V3 output pins must not source external loads.
+#   This does not specify the Uno's own power-input wiring.
+#
+# AUTHORITY
+#   Component library: intrinsic hardware characteristics and pin capabilities.
+#   Instance files: pin assignments, wiring and controller-specific behavior.
+#   This overview: instance registry, integration contracts and open decisions.
+#   Do not duplicate component pin maps or motor-drive truth tables here.
+
+chicken_chaser:
+  project_id: chicken_chaser
+  specification_role: master_overview
+  revision: 2
+  prototype:
+    platform: tinkercad_circuits
+    stage: distributed_control_prototype
+    scope:
+      - two_dc_motor_drive
+      - ultrasonic_obstacle_monitoring
+      - independent_motor_enable_authority
+      - fault_indicators_and_audio
+    excluded:
+      - motor_current_monitoring
+      - safety_certification
+
+  library:
+    # Local relative paths are the currently supplied, reusable definitions.
+    # They can later become locked CLI-installed library references.
+    components:
+      arduino_uno_r3:
+        definition: arduino_uno_r3.yml
+        root: arduino_uno_r3
+      attiny_x5:
+        definition: attiny.yml
+        root: attiny_x5
+      l293_family:
+        definition: L293x.yml
+        root: l293_family
+      hc_sr04:
+        definition: HC-SR04.yml
+        root: hc_sr04
+    not_yet_defined:
+      - generic_two_terminal_piezo
+      - momentary_reset_circuit
+      - dc_motor
+      - indicator_led
+
+  instances:
+    master:
+      component: arduino_uno_r3
+      instance_spec: controllers/chicken_chaser_arduino_uno_r3.yml
+      status: implemented_flat_file_move_pending
+      responsibilities:
+        - motion_commands
+        - motor_pwm_and_direction
+        - heartbeat_generation
+        - safety_status_monitoring
+        - fault_led_indicators
+        - piezo_alarm
+
+    safety:
+      component: attiny_x5
+      variant: ATtiny85
+      instance_spec: controllers/chicken_chaser_attiny85.yml
+      status: implemented_flat_file_move_pending
+      responsibilities:
+        - ultrasonic_measurement
+        - obstacle_and_communication_fault_detection
+        - motor_enable_authority
+        - ram_fault_latch
+        - safety_status_output
+        - hardware_reset_revalidation
+      note: Tinkercad schematic previously labeled ATtiny25; target in instance YAML is ATtiny85.
+
+    motor_driver:
+      component: l293_family
+      variant: L293D
+      instance_spec: motion/motor_driver.yml
+      status: proposed
+      responsibilities:
+        - motor_a_h_bridge
+        - motor_b_h_bridge
+
+    ultrasonic_front:
+      component: hc_sr04
+      instance_spec: peripherals/ultrasonic_front.yml
+      status: proposed
+      controller: safety
+
+    motor_a:
+      component: dc_motor
+      status: component_definition_pending
+      driven_by: motor_driver.MOTOR_A
+
+    motor_b:
+      component: dc_motor
+      status: component_definition_pending
+      driven_by: motor_driver.MOTOR_B
+
+    LED2:
+      component: indicator_led
+      status: component_definition_pending
+      driven_by: master.D7
+      active_level: LOW
+      purpose: fault_indicator
+
+    LED3:
+      component: indicator_led
+      status: component_definition_pending
+      driven_by: master.D8
+      active_level: LOW
+      purpose: status_indicator
+
+    piezo:
+      component: generic_two_terminal_piezo
+      status: definition_pending
+      driven_by: master.D11
+      type: to_be_confirmed
+
+    manual_reset_circuit:
+      component: momentary_reset_circuit
+      status: definition_pending
+      output_to: safety.PB5
+      notes: existing_pullup_diode_capacitor_debounce
+
+  project_specs:
+    master: controllers/chicken_chaser_arduino_uno_r3.yml
+    safety: controllers/chicken_chaser_attiny85.yml
+    safety_logic: safety/safety_logic.yml
+    motor_driver: motion/motor_driver.yml
+    ultrasonic_front: peripherals/ultrasonic_front.yml
+    power: power/power_distribution.yml
+
+  electrical_nets:
+    logic_5v:
+      type: regulated_supply
+      nominal_voltage_v: 5.0
+      source: external_regulator
+      consumers:
+        - safety.VCC
+        - ultrasonic_front.VCC
+        - motor_driver.VCC1
+      note: Uno power input not yet defined.
+    motor_supply:
+      type: regulated_supply
+      voltage_v: to_be_defined
+      source: external_motor_regulator_pending
+      consumers:
+        - motor_driver.VCC2
+      constraint: L293D_VCC2_requires_at_least_4_5V
+    common_gnd:
+      type: electrical_ground
+      shared_by:
+        - master
+        - safety
+        - motor_driver
+        - ultrasonic_front
+        - external_regulators
+    battery_positive:
+      type: unregulated_supply
+      voltage_v: 9.0
+      status: tinkercad_model
+
+  system_interfaces:
+    heartbeat:
+      source: master.D2
+      destination: safety.PB0
+      type: digital_toggle
+      initial_frequency_hz: 10
+      timing_status: provisional
+    safety_status:
+      source: safety.PB1
+      destination: master.D4
+      type: digital_level
+      LOW: unarmed_or_fault
+      HIGH: armed
+    motor_permission:
+      source: safety.PB4
+      destinations:
+        - motor_driver.EN1_2
+        - motor_driver.EN3_4
+      LOW: bridge_outputs_disabled
+      HIGH: bridge_outputs_permitted
+      external_pulldown_required: true
+      authority: safety_only
+    obstacle_sensing:
+      trigger: safety.PB2
+      trigger_destination: ultrasonic_front.TRIG
+      echo_source: ultrasonic_front.ECHO
+      echo_input: safety.PB3
+      minimum_interval_ms: 60
+    manual_fault_reset:
+      source: manual_reset_circuit.OUT
+      destination: safety.PB5
+      behavior: reset_firmware_then_revalidate
+
+  policies:
+    uno_power_output: NO_PWR_OUT
+    startup_motor_enable: LOW
+    fault_motor_enable: LOW
+    fault_clear: hardware_reset_then_validation
+    automatic_arm_after_valid_boot_checks: true
+    master_must_not_drive_motor_enables: true
+    led_and_piezo_reporting_owner: master
+    component_pin_mappings_source_of_truth: library
+    project_pin_connections_source_of_truth: instance_specs
+    # Net declarations are centralized here; per-pin wiring is in instance specs.
+
+  outstanding_decisions:
+    - motor_supply_regulator_voltage_and_wiring
+    - uno_power_input_and_backfeed_prevention
+    - obstacle_threshold_mm
+    - echo_timeout_and_out_of_range_classification
+    - heartbeat_timing_simulation_validation
+    - motor_control_truth_table_location_and_definition
+    - LED3_status_meaning_and_piezo_pattern
+    - active_or_passive_piezo_selection
+    - move_HC_SR04_instance_configuration_to_own_file
+    - create_motor_driver_and_power_distribution_instance_specs
+    - reconcile_ATtiny25_Tinkercad_part_with_ATtiny85_project_target
+    - verify_reset_and_enable_pull_resistor_connections_in_circuit
+
+  validation:
+    - All declared instance identifiers must be unique.
+    - Component and pin references must resolve against installed definitions.
+    - Motor direction/PWM signals originate at master; enable originates at safety.
+    - NO_PWR_OUT prohibits Uno supply outputs powering external consumers.
+    - Declared common net membership does not imply each physical pin is wired.
+    - Unimplemented instance specifications must not be treated as validated wiring.

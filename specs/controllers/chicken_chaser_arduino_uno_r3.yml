@@ -1,0 +1,182 @@
+# Chicken Chaser — Arduino Uno R3 project configuration
+# Reusable hardware definition: arduino_uno_r3.yml (unchanged)
+#
+# PSEUDO-YSL CONNECTION CONVENTIONS
+#   ->    Directed signal relationship (or net-to-terminal connection).
+#   ..    Inclusive pin range: master.A0..A5 expands to A0,A1,A2,A3,A4,A5.
+#   NC    Unconnected endpoint, not a component instance.
+#   All component endpoints are instance-qualified (e.g. master.D5).
+#   Named nets (logic_5v, common_gnd) are separate project-level objects.
+#   A connection to a net does not imply that every matching physical
+#   connector has an external wire attached.
+#
+# POWER POLICY
+#   NO_PWR_OUT means the Uno's 5V, 3V3 and other supply outputs must not
+#   power external devices in this project. Power sourcing and grounding
+#   are different concerns. Do not infer permission to backfeed the Uno.
+#
+# Provisional details: actual Uno power-input connection, the identity of
+# the physical GND terminals, LED anode/resistor paths, piezo return, and
+# external regulator connections require confirmation against the build.
+
+chicken_chaser_arduino_uno_r3:
+  component:
+    reference: arduino_uno_r3
+    definition: arduino_uno_r3.yml
+    mcu: ATmega328P
+  instance_id: master
+  role: motion_and_user_interface_controller
+
+  responsibilities:
+    - motion_requests
+    - motor_pwm_and_direction
+    - safety_heartbeat_generation
+    - safety_status_monitoring
+    - fault_led_indication
+    - audible_alarm
+
+  pin_assignments:
+    D2:
+      function: SAFETY_HEARTBEAT
+      direction: output
+      interface: digital_gpio
+      destination: safety.PB0
+      behavior: toggling_while_operational
+
+    D4:
+      function: SAFETY_STATUS
+      direction: input
+      interface: digital_gpio
+      source: safety.PB1
+      levels:
+        LOW: not_armed_or_fault
+        HIGH: armed
+      external_pulldown_recommended: true
+
+    D5:
+      function: MOTOR_B_IN4
+      direction: output
+      interface: gpio_pwm
+      destination: motor_driver.IN4
+    D6:
+      function: MOTOR_B_IN3
+      direction: output
+      interface: gpio_pwm
+      destination: motor_driver.IN3
+    D9:
+      function: MOTOR_A_IN2
+      direction: output
+      interface: gpio_pwm
+      destination: motor_driver.IN2
+    D10:
+      function: MOTOR_A_IN1
+      direction: output
+      interface: gpio_pwm
+      destination: motor_driver.IN1
+
+    D7:
+      function: FAULT_INDICATOR_LED2
+      direction: output
+      interface: digital_gpio
+      destination: LED2.CATHODE
+      active_level: LOW
+      note: Verify series current limiting and LED anode supply.
+    D8:
+      function: STATUS_INDICATOR_LED3
+      direction: output
+      interface: digital_gpio
+      destination: LED3.CATHODE
+      active_level: LOW
+      note: Verify series current limiting and LED anode supply.
+    D11:
+      function: PIEZO_ALARM
+      direction: output
+      interface: gpio_pwm
+      destination: piezo.positive
+      note: Confirm piezo type, drive requirements, and negative-terminal return.
+
+  connections:
+    # Common net: the Uno has several physical GND header contacts.
+    # Reference to master.GND is the shared electrical net, not a claim
+    # that every physical contact is separately wired.
+    - "common_gnd -> master.GND"
+
+    # Safety-controller communication
+    - "master.D2 -> safety.PB0"
+    - "safety.PB1 -> master.D4"
+
+    # Independent H-bridge input PWM/direction control
+    - "master.D5 -> motor_driver.IN4"
+    - "master.D6 -> motor_driver.IN3"
+    - "master.D9 -> motor_driver.IN2"
+    - "master.D10 -> motor_driver.IN1"
+
+    # Indicators and sound; polarity matters
+    - "master.D7 -> LED2.CATHODE"
+    - "master.D8 -> LED3.CATHODE"
+    - "master.D11 -> piezo.positive"
+
+    # Explicitly unused signal pins; range notation is pseudo-YSL
+    - "master.D0..D1 -> NC"
+    - "master.D3 -> NC"
+    - "master.D12..D13 -> NC"
+    - "master.A0..A5 -> NC"
+    - "master.AREF -> NC"
+
+  unassigned:
+    # IOREF is a power-domain reference, not a general GPIO.
+    - master.IOREF
+    - master.VIN
+    - master.5V
+    - master.3V3
+    - master.RESET
+    - master.SDA
+    - master.SCL
+
+  power_policy:
+    mode: NO_PWR_OUT
+    prohibited_external_power_sources:
+      - master.5V
+      - master.3V3
+    external_power_distribution: true
+    logic_supply_net: logic_5v
+    ground_net: common_gnd
+    uno_power_input: to_be_defined
+    note: >-
+      Logic and motor supplies are defined by the project power-distribution
+      design. Do not use Uno output rails as external power sources, and
+      validate power-input topology before wiring external regulators.
+
+  behavior:
+    startup:
+      motor_inputs: LOW
+      heartbeat: disabled_until_initialized
+      alarm: inactive
+      indicators: initialize_to_defined_state
+    communications:
+      type: dedicated_gpio_signals
+      heartbeat_output: D2
+      safety_status_input: D4
+      heartbeat_frequency_hz: 10
+      note: Initial simulation value; ATtiny handles timeout and motor permission.
+    motor_control:
+      enable_authority: safety.PB4
+      uno_must_not_drive_enable_pins: true
+      independently_commanded_h_bridges: 2
+      pwm_pins: [D5, D6, D9, D10]
+      direction_and_pwm_truth_table: to_be_defined
+    fault_reporting:
+      source: safety.PB1
+      led_output: D7
+      additional_led_output: D8
+      piezo_output: D11
+      led_meanings: to_be_defined
+      piezo_pattern: to_be_defined
+
+  validation:
+    - All instance-qualified pins must resolve against library definitions.
+    - PWM motor inputs must be assigned to PWM-capable MCU pins.
+    - Motor enable authority must remain exclusively with the ATtiny.
+    - No Uno power-output terminal may source external component power.
+    - A net-level GND reference must not imply physical header continuity.
+    - Verify LED resistor paths and piezo return before hardware build.

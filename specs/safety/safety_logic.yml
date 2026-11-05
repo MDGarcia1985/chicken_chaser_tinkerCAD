@@ -1,0 +1,11 @@
+safety_logic:
+  motor_enable:
+    controller: attiny85
+    output: MOTOR_SAFE
+    connected_to:
+      - L293D.pin_1
+      - L293D.pin_9
+    default_state: LOW
+    safe_state: HIGH
+    fault_state: LOW
+    startup_state: LOW
